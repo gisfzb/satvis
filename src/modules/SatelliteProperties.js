@@ -12,6 +12,8 @@ import {
   defined,
 } from "@cesium/engine";
 
+const deg2rad = Math.PI / 180;
+
 import Orbit from "./Orbit";
 import "./util/CesiumSampledPositionRawValueAccess";
 
@@ -19,12 +21,14 @@ import { CesiumCallbackHelper } from "./util/CesiumCallbackHelper";
 
 export class SatelliteProperties {
   constructor(tle, tags = []) {
-    this.name = tle.split("\n")[0].trim();
-    if (tle.startsWith("0 ")) {
-      this.name = this.name.substring(2);
+    if (tle) {
+      this.name = tle.split("\n")[0].trim();
+      if (tle.startsWith("0 ")) {
+        this.name = this.name.substring(2);
+      }
+      this.orbit = new Orbit(this.name, tle);
+      this.satnum = this.orbit.satnum;
     }
-    this.orbit = new Orbit(this.name, tle);
-    this.satnum = this.orbit.satnum;
     this.tags = tags;
     this.overpassMode = "elevation";
 
@@ -32,6 +36,32 @@ export class SatelliteProperties {
     this.passes = [];
     this.passInterval = undefined;
     this.passIntervals = new TimeIntervalCollection();
+
+    // Data link simulation properties
+    this.dataLinkEnabled = false;
+    this.dataLinkDistanceThreshold = 800; // km
+    this.dataLinkPasses = [];
+    this.dataLinkIntervals = new TimeIntervalCollection();
+    this.dataLinkInterval = undefined;
+    this.currentDataLinkDistance = undefined; // For real-time distance display
+  }
+
+  /**
+   * Initialize satellite from Keplerian orbital elements
+   * @param {Object} elements - Keplerian orbital elements
+   * @param {string} elements.name - Satellite name
+   * @param {number} elements.a - Semi-major axis in km
+   * @param {number} elements.e - Eccentricity
+   * @param {number} elements.i - Inclination in degrees
+   * @param {number} elements.omega - Right ascension of ascending node (RAAN) in degrees
+   * @param {number} elements.w - Argument of perigee in degrees
+   * @param {number} elements.nu - True anomaly in degrees
+   * @param {Date} epoch - Epoch time
+   */
+  initFromKeplerianElements(elements, epoch = new Date()) {
+    this.name = elements.name;
+    this.orbit = Orbit.fromKeplerianElements(this.name, elements, epoch);
+    this.satnum = this.orbit.satrec.satnum;
   }
 
   hasTag(tag) {
@@ -51,6 +81,20 @@ export class SatelliteProperties {
     const positions = this.sampledPosition[reference].getRawValues(start, end);
     if (loop) {
       // Readd the first position to the end of the array to close the loop
+      return [...positions, positions[0]];
+    }
+    return positions;
+  }
+
+  getSampledPositionsForOrbitPeriod(start) {
+    // Get positions for half orbit backwards and half orbit forwards
+    const halfOrbit = this.orbit.orbitalPeriod * 30; // seconds
+    const startTime = JulianDate.addSeconds(start, -halfOrbit, new JulianDate());
+    const endTime = JulianDate.addSeconds(start, halfOrbit, new JulianDate());
+
+    const positions = this.sampledPosition.inertial.getRawValues(startTime, endTime);
+    if (positions.length > 0) {
+      // Close the loop
       return [...positions, positions[0]];
     }
     return positions;
@@ -280,6 +324,212 @@ export class SatelliteProperties {
       });
     });
     this.passIntervals = new TimeIntervalCollection(passIntervalArray);
+  }
+
+  /**
+   * Get pass intervals for a specific ground station
+   * @param {string} groundStationName - Name of the ground station
+   * @returns {TimeIntervalCollection|null} Pass intervals for the ground station or null
+   */
+  getPassIntervalsForGroundStation(groundStationName) {
+    if (!this.passes || this.passes.length === 0) {
+      return null;
+    }
+
+    const filteredPasses = this.passes.filter((pass) => pass.groundStationName === groundStationName);
+    if (filteredPasses.length === 0) {
+      return null;
+    }
+
+    const passIntervalArray = filteredPasses.map((pass) => {
+      const startJulian = JulianDate.fromDate(new Date(pass.start));
+      const endJulian = JulianDate.fromDate(new Date(pass.end));
+      return new TimeInterval({
+        start: startJulian,
+        stop: endJulian,
+      });
+    });
+    return new TimeIntervalCollection(passIntervalArray);
+  }
+
+  /**
+   * Update data link passes based on distance threshold
+   * @param {JulianDate} time - Current time
+   */
+  updateDataLinkPasses(time) {
+    if (!this.dataLinkEnabled || !this.groundStationAvailable) {
+      this.dataLinkPasses = [];
+      this.dataLinkIntervals = new TimeIntervalCollection();
+      return;
+    }
+
+    // Check if still inside current data link interval
+    if (typeof this.dataLinkInterval !== "undefined" && TimeInterval.contains(new TimeInterval({ start: this.dataLinkInterval.start, stop: this.dataLinkInterval.stop }), time)) {
+      return;
+    }
+
+    this.dataLinkInterval = {
+      start: JulianDate.addDays(time, -1, JulianDate.clone(time)),
+      stop: JulianDate.addDays(time, 1, JulianDate.clone(time)),
+      stopPrediction: JulianDate.addDays(time, 4, JulianDate.clone(time)),
+    };
+
+    let allDataLinkPasses = [];
+    this.groundStations.forEach((groundStation) => {
+      const passes = this.orbit.computePassesByDistance(
+        groundStation.position,
+        this.dataLinkDistanceThreshold,
+        JulianDate.toDate(this.dataLinkInterval.start),
+        JulianDate.toDate(this.dataLinkInterval.stopPrediction)
+      );
+      passes.forEach((pass) => {
+        pass.groundStationName = groundStation.name;
+      });
+      allDataLinkPasses.push(...passes);
+    });
+
+    // Sort passes by time
+    allDataLinkPasses.sort((a, b) => a.start - b.start);
+    this.dataLinkPasses = allDataLinkPasses;
+    this.computeDataLinkIntervals();
+  }
+
+  /**
+   * Compute data link intervals from passes
+   */
+  computeDataLinkIntervals() {
+    const intervalArray = this.dataLinkPasses.map((pass) => {
+      const startJulian = JulianDate.fromDate(new Date(pass.start));
+      const endJulian = JulianDate.fromDate(new Date(pass.end));
+      return new TimeInterval({
+        start: startJulian,
+        stop: endJulian,
+      });
+    });
+    this.dataLinkIntervals = new TimeIntervalCollection(intervalArray);
+  }
+
+  /**
+   * Clear data link passes
+   */
+  clearDataLinkPasses() {
+    this.dataLinkInterval = undefined;
+    this.dataLinkPasses = [];
+    this.dataLinkIntervals = new TimeIntervalCollection();
+  }
+
+  /**
+   * Enable or disable data link simulation
+   * @param {boolean} enabled
+   */
+  setDataLinkEnabled(enabled) {
+    this.dataLinkEnabled = enabled;
+    if (!enabled) {
+      this.clearDataLinkPasses();
+    }
+  }
+
+  /**
+   * Set data link distance threshold
+   * @param {number} distanceKm - Distance threshold in kilometers
+   */
+  setDataLinkDistanceThreshold(distanceKm) {
+    this.dataLinkDistanceThreshold = distanceKm;
+    if (this.dataLinkEnabled) {
+      this.clearDataLinkPasses();
+    }
+  }
+
+  /**
+   * Calculate current distance to nearest ground station
+   * @param {JulianDate} time - Current time
+   * @returns {number|null} Distance in km or null if no ground station
+   */
+  getCurrentDataLinkDistance(time) {
+    if (!this.groundStationAvailable) {
+      return null;
+    }
+
+    const positionGeodetic = this.orbit.positionGeodetic(JulianDate.toDate(time));
+    if (!positionGeodetic) {
+      return null;
+    }
+
+    let minDistance = Infinity;
+    this.groundStations.forEach((groundStation) => {
+      const gs = { ...groundStation.position };
+      gs.latitude *= deg2rad;
+      gs.longitude *= deg2rad;
+      gs.height /= 1000;
+
+      const satLat = positionGeodetic.latitude * deg2rad;
+      const satLon = positionGeodetic.longitude * deg2rad;
+      const satHeight = positionGeodetic.height / 1000;
+
+      // Calculate great circle distance
+      const deltaLat = satLat - gs.latitude;
+      const deltaLon = satLon - gs.longitude;
+      const a = Math.sin(deltaLat / 2) * Math.sin(deltaLat / 2) + Math.cos(gs.latitude) * Math.cos(satLat) * Math.sin(deltaLon / 2) * Math.sin(deltaLon / 2);
+      const c = 2 * Math.atan2(Math.sqrt(a), Math.sqrt(1 - a));
+      const earthRadius = 6371;
+      const surfaceDistance = earthRadius * c;
+      const heightDiff = satHeight - gs.height;
+      const distance3D = Math.sqrt(Math.pow(surfaceDistance, 2) + Math.pow(heightDiff, 2));
+
+      if (distance3D < minDistance) {
+        minDistance = distance3D;
+      }
+    });
+
+    return minDistance === Infinity ? null : minDistance;
+  }
+
+  /**
+   * Get the closest ground station within data link range
+   * @param {JulianDate} time - Current time
+   * @returns {Object|null} { groundStation, distance } or null if none in range
+   */
+  getClosestGroundStationInRange(time) {
+    if (!this.groundStationAvailable) {
+      return null;
+    }
+
+    const positionGeodetic = this.orbit.positionGeodetic(JulianDate.toDate(time));
+    if (!positionGeodetic) {
+      return null;
+    }
+
+    let closest = null;
+    let minDistance = Infinity;
+
+    this.groundStations.forEach((groundStation) => {
+      const gs = { ...groundStation.position };
+      gs.latitude *= deg2rad;
+      gs.longitude *= deg2rad;
+      gs.height /= 1000;
+
+      const satLat = positionGeodetic.latitude * deg2rad;
+      const satLon = positionGeodetic.longitude * deg2rad;
+      const satHeight = positionGeodetic.height / 1000;
+
+      // Calculate great circle distance
+      const deltaLat = satLat - gs.latitude;
+      const deltaLon = satLon - gs.longitude;
+      const a = Math.sin(deltaLat / 2) * Math.sin(deltaLat / 2) + Math.cos(gs.latitude) * Math.cos(satLat) * Math.sin(deltaLon / 2) * Math.sin(deltaLon / 2);
+      const c = 2 * Math.atan2(Math.sqrt(a), Math.sqrt(1 - a));
+      const earthRadius = 6371;
+      const surfaceDistance = earthRadius * c;
+      const heightDiff = satHeight - gs.height;
+      const distance3D = Math.sqrt(Math.pow(surfaceDistance, 2) + Math.pow(heightDiff, 2));
+
+      // Only consider ground stations within data link range
+      if (distance3D <= this.dataLinkDistanceThreshold && distance3D < minDistance) {
+        minDistance = distance3D;
+        closest = groundStation;
+      }
+    });
+
+    return closest ? { groundStation: closest, distance: minDistance } : null;
   }
 
   get swath() {

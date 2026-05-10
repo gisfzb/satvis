@@ -131,6 +131,7 @@ export class SatelliteComponentCollection extends CesiumComponentCollection {
       }
       if (this.isSelected) {
         this.props.updatePasses(this.viewer.clock.currentTime);
+        this.props.updateDataLinkPasses(this.viewer.clock.currentTime);
         CesiumTimelineHelper.updateHighlightRanges(this.viewer, this.props.passes);
       }
     });
@@ -138,6 +139,7 @@ export class SatelliteComponentCollection extends CesiumComponentCollection {
     this.eventListeners.trackedEntity = this.viewer.trackedEntityChanged.addEventListener(() => {
       if (this.isTracked) {
         this.artificiallyTrack();
+        this.props.updateDataLinkPasses(this.viewer.clock.currentTime);
       }
       if ("Orbit" in this.components && !this.isCorrectOrbitComponent()) {
         // Recreate Orbit to change visualisation type
@@ -212,6 +214,9 @@ export class SatelliteComponentCollection extends CesiumComponentCollection {
       case "Ground station link":
         this.createGroundStationLink();
         break;
+      case "Data link":
+        this.createDataLink();
+        break;
       default:
         console.error("Unknown component");
     }
@@ -249,12 +254,50 @@ export class SatelliteComponentCollection extends CesiumComponentCollection {
   }
 
   createModel() {
-    const model = new ModelGraphics({
-      uri: `./data/models/${this.props.name.split(" ").join("-")}.glb`,
-      minimumPixelSize: 50,
-      maximumScale: 10000,
+    const modelName = this.props.name.split(" ").join("-");
+    const modelUri = `./data/models/${modelName}.glb`;
+    const defaultBoxSize = 2000;
+
+    // Check if model file exists before creating model entity
+    fetch(modelUri, { method: "HEAD" })
+      .then((response) => {
+        if (response.ok) {
+          // Model exists, use it
+          const modelGraphics = new ModelGraphics({
+            uri: modelUri,
+            minimumPixelSize: 30,
+            maximumScale: 5000,
+            incrementally: true,
+          });
+          this.updateComponentGraphics("3D model", "model", modelGraphics);
+        } else {
+          // Model doesn't exist, use box fallback
+          this.createModelFallback();
+        }
+      })
+      .catch(() => {
+        // Network error or model not found, use box fallback
+        this.createModelFallback();
+      });
+  }
+
+  createModelFallback() {
+    // Create a simple box as a placeholder for the satellite
+    const box = new BoxGraphics({
+      dimensions: new Cartesian3(2000, 2000, 2000),
+      material: Color.LIGHTGREY.withAlpha(0.8),
+      fill: true,
+      outline: true,
+      outlineColor: Color.WHITE,
     });
-    this.createCesiumSatelliteEntity("3D model", "model", model);
+    this.createCesiumSatelliteEntity("3D model", "box", box);
+  }
+
+  updateComponentGraphics(componentName, key, value) {
+    const component = this.components[componentName];
+    if (component) {
+      component[key] = value;
+    }
   }
 
   createLabel() {
@@ -308,29 +351,86 @@ export class SatelliteComponentCollection extends CesiumComponentCollection {
   }
 
   createOrbitPolylinePrimitive() {
+    // Create two separate polylines for past and future orbit
+    // Past orbit (trail): Red color
+    // Future orbit (lead): Blue color
+    const trailColor = new Color(1.0, 0.3, 0.3, 0.5); // Red for past
+    const leadColor = new Color(0.3, 0.6, 1.0, 0.5); // Blue for future
+
+    const currentTime = this.viewer.clock.currentTime;
+    const halfOrbitTime = (this.props.orbit.orbitalPeriod * 60) / 2;
+
+    // Get sampled positions for the entire orbit period
+    const allPositions = this.props.getSampledPositionsForOrbitPeriod(currentTime);
+    if (!allPositions || allPositions.length === 0) {
+      return;
+    }
+
+    // Find the index of current time position
+    const currentIndex = this.findCurrentTimeIndex(allPositions, currentTime);
+
+    // Split positions into past (trail) and future (lead) segments
+    const trailPositions = allPositions.slice(0, currentIndex + 1);
+    const leadPositions = allPositions.slice(currentIndex);
+
+    // Create primitive with both trail and lead polylines
+    const geometryInstances = [];
+
+    if (trailPositions.length > 1) {
+      geometryInstances.push(
+        new GeometryInstance({
+          geometry: new PolylineGeometry({
+            positions: trailPositions,
+            width: 2,
+            arcType: ArcType.NONE,
+            vertexFormat: PolylineColorAppearance.VERTEX_FORMAT,
+          }),
+          attributes: {
+            color: ColorGeometryInstanceAttribute.fromColor(trailColor),
+          },
+          id: `${this.props.name}-trail`,
+        })
+      );
+    }
+
+    if (leadPositions.length > 1) {
+      geometryInstances.push(
+        new GeometryInstance({
+          geometry: new PolylineGeometry({
+            positions: leadPositions,
+            width: 2,
+            arcType: ArcType.NONE,
+            vertexFormat: PolylineColorAppearance.VERTEX_FORMAT,
+          }),
+          attributes: {
+            color: ColorGeometryInstanceAttribute.fromColor(leadColor),
+          },
+          id: `${this.props.name}-lead`,
+        })
+      );
+    }
+
     const primitive = new Primitive({
-      geometryInstances: new GeometryInstance({
-        geometry: new PolylineGeometry({
-          positions: this.props.getSampledPositionsForNextOrbit(this.viewer.clock.currentTime),
-          width: 2,
-          arcType: ArcType.NONE,
-          // granularity: CesiumMath.RADIANS_PER_DEGREE * 10,
-          vertexFormat: PolylineColorAppearance.VERTEX_FORMAT,
-        }),
-        attributes: {
-          color: ColorGeometryInstanceAttribute.fromColor(new Color(1.0, 1.0, 1.0, 0.15)),
-        },
-        id: this.props.name,
-      }),
+      geometryInstances,
       appearance: new PolylineColorAppearance(),
       asynchronous: false,
     });
-    const icrfToFixed = Transforms.computeIcrfToFixedMatrix(this.viewer.clock.currentTime);
+
+    const icrfToFixed = Transforms.computeIcrfToFixedMatrix(currentTime);
     if (defined(icrfToFixed)) {
-      // TODO: Cache the model matrix
       primitive.modelMatrix = Matrix4.fromRotationTranslation(icrfToFixed);
     }
     this.components.Orbit = primitive;
+  }
+
+  findCurrentTimeIndex(positions, currentTime) {
+    // Find the index closest to current time
+    // Positions array covers an entire orbit period, find the middle point as reference
+    const totalPositions = positions.length;
+    // Assume positions are evenly distributed, find approximate current position
+    // Since we don't have time stamps in positions, we estimate based on orbital period
+    const halfIndex = Math.floor(totalPositions / 2);
+    return halfIndex;
   }
 
   createOrbitPolylineGeometry() {
@@ -400,6 +500,10 @@ export class SatelliteComponentCollection extends CesiumComponentCollection {
     if (!this.props.groundStationAvailable) {
       return;
     }
+
+    const self = this;
+
+    // Dynamically connect to the ground station with an active pass
     const polyline = new PolylineGraphics({
       followSurface: false,
       material: new PolylineGlowMaterialProperty({
@@ -407,15 +511,67 @@ export class SatelliteComponentCollection extends CesiumComponentCollection {
         color: Color.FORESTGREEN,
       }),
       positions: new CallbackProperty((time) => {
-        const satPosition = this.props.position(time);
-        const groundPosition = this.props.groundStationPosition.cartesian;
-        const positions = [satPosition, groundPosition];
-        return positions;
+        // Find the ground station with an active pass
+        const activeGroundStation = self.props.groundStations.find((gs) => {
+          const passIntervals = self.props.getPassIntervalsForGroundStation(gs.name);
+          return passIntervals && passIntervals.contains(time);
+        });
+        if (activeGroundStation) {
+          const satPosition = self.props.position(time);
+          const groundPosition = activeGroundStation.position.cartesian;
+          return [satPosition, groundPosition];
+        }
+        return [];
       }, false),
-      show: new CallbackProperty((time) => this.props.passIntervals.contains(time), false),
+      show: new CallbackProperty((time) => {
+        return self.props.passIntervals.contains(time);
+      }, false),
       width: 5,
     });
     this.createCesiumSatelliteEntity("Ground station link", "polyline", polyline);
+  }
+
+  /**
+   * Create data link visualization for satellite-ground station communication
+   * Shows glowing line when satellite is within data link range of ANY ground station
+   * Automatically connects to the closest ground station in range
+   */
+  createDataLink() {
+    if (!this.props.groundStationAvailable) {
+      return;
+    }
+
+    const self = this;
+
+    // Use a fixed glow material - dynamically find closest ground station in range
+    const polyline = new PolylineGraphics({
+      followSurface: false,
+      material: new PolylineGlowMaterialProperty({
+        glowPower: 0.5,
+        color: Color.LIME,
+      }),
+      positions: new CallbackProperty((time) => {
+        const closest = self.props.getClosestGroundStationInRange(time);
+        if (closest && self.props.dataLinkEnabled) {
+          const satPosition = self.props.position(time);
+          const groundPosition = closest.groundStation.position.cartesian;
+          return [satPosition, groundPosition];
+        }
+        return [];
+      }, false),
+      show: new CallbackProperty((time) => {
+        if (!self.props.dataLinkEnabled) return false;
+        const closest = self.props.getClosestGroundStationInRange(time);
+        return closest !== null;
+      }, false),
+      width: 6,
+    });
+    this.createCesiumSatelliteEntity("Data link", "polyline", polyline);
+
+    // Update data link passes when selected or tracked
+    if (this.isSelected || this.isTracked) {
+      this.props.updateDataLinkPasses(this.viewer.clock.currentTime);
+    }
   }
 
   set groundStations(groundStations) {
@@ -426,14 +582,19 @@ export class SatelliteComponentCollection extends CesiumComponentCollection {
 
     this.props.groundStations = groundStations;
     this.props.clearPasses();
+    this.props.clearDataLinkPasses();
     if (this.isSelected || this.isTracked) {
       this.props.updatePasses(this.viewer.clock.currentTime);
+      this.props.updateDataLinkPasses(this.viewer.clock.currentTime);
       if (this.isSelected) {
         CesiumTimelineHelper.updateHighlightRanges(this.viewer, this.props.passes);
       }
     }
     if (this.created) {
       this.createGroundStationLink();
+      if (this.props.dataLinkEnabled) {
+        this.createDataLink();
+      }
     }
   }
 }

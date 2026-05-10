@@ -25,6 +25,28 @@ body {
     left: 2px;
 }
 
+.system-title {
+    font-size: 18px;
+    font-weight: bold;
+    color: #ffffff;
+    text-shadow: 2px 2px 4px rgba(0, 0, 0, 0.5);
+    padding: 6px 10px;
+    margin-bottom: 5px;
+    background-color: #30333680;
+    border-radius: 8px;
+    text-align: center;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    gap: 8px;
+}
+
+.system-logo {
+    width: 28px;
+    height: 28px;
+    filter: drop-shadow(0 0 4px rgba(79, 172, 254, 0.5));
+}
+
 #toolbarRight {
     position: absolute;
     top: 5px;
@@ -104,6 +126,7 @@ a.cesium-toolbar-button {
 
 .svg-sat {
     background: url("../images/icons/sat/2.svg") no-repeat;
+    background-size: 18px 18px;
     filter: brightness(3.1);
     transform: rotate(-90deg);
     margin-bottom: 2px;
@@ -111,9 +134,53 @@ a.cesium-toolbar-button {
 
 .svg-groundstation {
     background: url("../images/icons/sat/9.svg") no-repeat;
+    background-size: 18px 18px;
     filter: brightness(3.1);
     margin-bottom: 2px;
     margin-left: 2px;
+}
+
+.svg-customsat {
+    background: url("/custom-sat.svg") no-repeat;
+    background-size: 18px 18px;
+    filter: brightness(3.1);
+    margin-bottom: 2px;
+}
+
+.svg-layers {
+    background: url("../images/icons/layers.svg") no-repeat;
+    background-size: 18px 18px;
+    filter: brightness(3.1);
+}
+
+.svg-globe {
+    background: url("../images/icons/globe.svg") no-repeat;
+    background-size: 18px 18px;
+    filter: brightness(3.1);
+}
+
+.svg-mobile {
+    background: url("../images/icons/mobile.svg") no-repeat;
+    background-size: 18px 18px;
+    filter: brightness(3.1);
+}
+
+.svg-tool {
+    background: url("../images/icons/tool.svg") no-repeat;
+    background-size: 18px 18px;
+    filter: brightness(3.1);
+}
+
+.svg-github {
+    background: url("../images/icons/github.svg") no-repeat;
+    background-size: 18px 18px;
+    filter: brightness(3.1);
+}
+
+.svg-eye {
+    background: url("../images/icons/eye.svg") no-repeat;
+    background-size: 18px 18px;
+    filter: brightness(3.1);
 }
 
 .cesium-infoBox {
@@ -150,4 +217,8 @@ a.cesium-toolbar-button {
     width: 22px;
     padding: 0px;
     margin: 0px 3px;
+}
+
+.cesium-widget-credits {
+    display: none !important;
 }

@@ -15,11 +15,17 @@ export class SatelliteManager {
 
   #overpassMode = "elevation";
 
+  #dataLinkEnabled = false;
+
+  #dataLinkDistanceThreshold = 800; // km
+
+  #dataLinkUpdateTimer = null;
+
   constructor(viewer) {
     this.viewer = viewer;
 
     this.satellites = [];
-    this.availableComponents = ["Point", "Label", "Orbit", "Orbit track", "Ground track", "Sensor cone", "3D model"];
+    this.availableComponents = ["Point", "Label", "Orbit", "Orbit track", "Ground track", "Sensor cone", "3D model", "Ground station link", "Data link"];
 
     this.viewer.trackedEntityChanged.addEventListener(() => {
       if (this.trackedSatellite) {
@@ -60,6 +66,16 @@ export class SatelliteManager {
 
   addFromTle(tle, tags, updateStore = true) {
     const sat = new SatelliteComponentCollection(this.viewer, tle, tags);
+    this.#add(sat);
+    if (updateStore) {
+      this.updateStore();
+    }
+  }
+
+  addFromKeplerianElements(elements, epoch = new Date(), tags = [], updateStore = true) {
+    const sat = new SatelliteComponentCollection(this.viewer, null, tags);
+    // Set up the satellite with Keplerian elements
+    sat.props.initFromKeplerianElements(elements, epoch);
     this.#add(sat);
     if (updateStore) {
       this.updateStore();
@@ -319,5 +335,87 @@ export class SatelliteManager {
 
   get pendingUpdate() {
     return SatelliteComponentCollection.primitivePendingUpdate;
+  }
+
+  /**
+   * Get data link enabled state
+   */
+  get dataLinkEnabled() {
+    return this.#dataLinkEnabled;
+  }
+
+  /**
+   * Set data link enabled state for all satellites
+   * @param {boolean} enabled
+   */
+  set dataLinkEnabled(enabled) {
+    this.#dataLinkEnabled = enabled;
+    this.satellites.forEach((sat) => {
+      sat.props.setDataLinkEnabled(enabled);
+      if (enabled && sat.created) {
+        sat.enableComponent("Data link");
+        sat.props.updateDataLinkPasses(this.viewer.clock.currentTime);
+      } else if (!enabled && sat.created) {
+        sat.disableComponent("Data link");
+      }
+    });
+  }
+
+  /**
+   * Get data link distance threshold
+   */
+  get dataLinkDistanceThreshold() {
+    return this.#dataLinkDistanceThreshold;
+  }
+
+  /**
+   * Set data link distance threshold for all satellites
+   * @param {number} distanceKm - Distance threshold in kilometers
+   */
+  set dataLinkDistanceThreshold(distanceKm) {
+    this.#dataLinkDistanceThreshold = distanceKm;
+    this.satellites.forEach((sat) => {
+      sat.props.setDataLinkDistanceThreshold(distanceKm);
+    });
+
+    // Debounce the expensive recalculation of data link passes
+    // to prevent UI freeze when slider is being dragged
+    if (this.#dataLinkUpdateTimer) {
+      clearTimeout(this.#dataLinkUpdateTimer);
+    }
+    this.#dataLinkUpdateTimer = setTimeout(() => {
+      this.satellites.forEach((sat) => {
+        if (this.#dataLinkEnabled && sat.props.groundStationAvailable) {
+          sat.props.clearDataLinkPasses();
+          sat.props.updateDataLinkPasses(this.viewer.clock.currentTime);
+        }
+      });
+    }, 100);
+  }
+
+  /**
+   * Get current data link distance for a satellite
+   * @param {string} satName - Satellite name
+   * @returns {number|null} Distance in km or null
+   */
+  getSatelliteDataLinkDistance(satName) {
+    const sat = this.getSatellite(satName);
+    if (!sat) return null;
+    return sat.props.getCurrentDataLinkDistance(this.viewer.clock.currentTime);
+  }
+
+  /**
+   * Get the name of the currently connected ground station for a satellite
+   * @param {string} satName - Satellite name
+   * @returns {string|null} Ground station name or null if not connected
+   */
+  getCurrentConnectedStation(satName) {
+    const sat = this.getSatellite(satName);
+    if (!sat) return null;
+    const closest = sat.props.getClosestGroundStationInRange(this.viewer.clock.currentTime);
+    if (closest && sat.props.dataLinkEnabled) {
+      return closest.groundStation.name;
+    }
+    return null;
   }
 }

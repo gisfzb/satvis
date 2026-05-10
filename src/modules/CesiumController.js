@@ -49,7 +49,7 @@ export class CesiumController {
 
     this.viewer = new Viewer("cesiumContainer", {
       animation: !this.minimalUI,
-      baseLayer: this.createImageryLayer("OfflineHighres"),
+      baseLayer: this.createImageryLayer("Offline"),
       baseLayerPicker: false,
       fullscreenButton: !this.minimalUI,
       fullscreenElement: document.body,
@@ -71,6 +71,16 @@ export class CesiumController {
     // Cesium default settings
     this.viewer.clock.shouldAnimate = true;
     this.viewer.scene.globe.enableLighting = true;
+
+    // Set default camera position to China
+    this.viewer.camera.flyTo({
+      destination: Cartesian3.fromDegrees(105, 35, 15000000),
+      orientation: {
+        heading: 0,
+        pitch: -CesiumMath.PI_OVER_TWO,
+        roll: 0,
+      },
+    });
     this.viewer.scene.highDynamicRange = true;
     this.viewer.scene.maximumRenderTimeChange = 1 / 30;
     this.viewer.scene.requestRenderMode = true;
@@ -103,7 +113,8 @@ export class CesiumController {
     if (!DeviceDetect.inIframe()) {
       this.viewer.creditDisplay.addStaticCredit(new Credit(`<a href="/privacy.html" target="_blank"><u>Privacy</u></a>`, true));
     }
-    this.viewer.creditDisplay.addStaticCredit(new Credit(`Satellite TLE data provided by <a href="https://celestrak.org/NORAD/elements/" target="_blank"><u>Celestrak</u></a>`));
+    // Hide Cesium default credits
+    this.viewer.creditDisplay.hideDefaultCredits = true;
 
     // Fix Cesium logo in minimal ui mode
     if (this.minimalUI) {
