@@ -562,4 +562,34 @@ export class SatelliteProperties {
     }
     return 200;
   }
+
+  /**
+   * Calculate 3D distance between this satellite and another satellite
+   * @param {SatelliteProperties} otherSat - The other satellite
+   * @param {JulianDate} time - Current time
+   * @returns {number|null} Distance in km or null if position unavailable
+   */
+  getDistanceToSatellite(otherSat, time) {
+    if (!this.sampledPosition || !this.sampledPosition.valid) {
+      return null;
+    }
+    if (!otherSat.sampledPosition || !otherSat.sampledPosition.valid) {
+      return null;
+    }
+
+    const pos1 = this.sampledPosition.fixed.getValue(time);
+    const pos2 = otherSat.sampledPosition.fixed.getValue(time);
+
+    if (!pos1 || !pos2) {
+      return null;
+    }
+
+    // Calculate Euclidean distance in km
+    const dx = pos1.x - pos2.x;
+    const dy = pos1.y - pos2.y;
+    const dz = pos1.z - pos2.z;
+    const distance = Math.sqrt(dx * dx + dy * dy + dz * dz);
+
+    return distance / 1000; // Convert meters to km
+  }
 }

@@ -1,6 +1,7 @@
 export default {
   // Toolbar tooltips
   satelliteSelection: "Satellite selection",
+  settings: "Settings",
   satelliteElements: "Satellite elements",
   groundStation: "Ground station",
   map: "Map",
@@ -48,6 +49,16 @@ export default {
   connectedStation: "Connected",
   enabled: "Enabled",
 
+  // Collision Warning
+  collisionWarning: "Collision Warning",
+  collisionTrackingHint: "Click to locate satellite",
+  enableCollisionWarning: "Enable Collision Warning",
+  collisionThreshold: "Warning Distance",
+  activeWarnings: "Active Warnings",
+  noWarnings: "No Warnings",
+  collisionDetected: "Collision Risk Detected",
+  distance: "Distance",
+
   // Layers
   layersTitle: "Layers",
   terrainTitle: "Terrain",
@@ -64,6 +75,7 @@ export default {
 
   // Debug
   debugTitle: "Debug",
+  quickNavigate: "Quick Navigate",
   fps: "FPS",
   requestRender: "RequestRender",
   highQuality: "High Quality",
@@ -112,6 +124,8 @@ export default {
 
   // Misc
   loading: "Loading...",
+  performanceSettings: "Performance Settings",
+  visualSettings: "Visual Settings",
   error: "Error",
   close: "Close",
   cancel: "Cancel",

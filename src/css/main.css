@@ -171,6 +171,18 @@ a.cesium-toolbar-button {
     filter: brightness(3.1);
 }
 
+.svg-collision {
+    background: url("/collision-warning.svg") no-repeat;
+    background-size: 20px 20px;
+    filter: brightness(3.1) drop-shadow(0 0 4px rgba(255, 100, 100, 0.8));
+}
+
+.svg-sat-collision {
+    background: url("/sat-collision.svg") no-repeat;
+    background-size: 20px 20px;
+    filter: brightness(1.2);
+}
+
 .svg-github {
     background: url("../images/icons/github.svg") no-repeat;
     background-size: 18px 18px;

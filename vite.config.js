@@ -62,8 +62,8 @@ export default defineConfig({
     VitePWA({
       registerType: "prompt",
       manifest: {
-        name: "Satellite Orbit Visualization",
-        short_name: "SatVis",
+        name: "太空导航",
+        short_name: "太空导航",
         description: "Satellite Orbit Visualization with CesiumJS",
         start_url: "/",
         scope: "/",

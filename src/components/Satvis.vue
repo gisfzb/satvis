@@ -27,6 +27,9 @@
         <button v-tooltip="$t('debug')" type="button" class="cesium-button cesium-toolbar-button" @click="toggleMenu('dbg')">
           <i class="icon svg-tool"></i>
         </button>
+        <button v-tooltip="$t('collisionWarning')" type="button" class="cesium-button cesium-toolbar-button" :class="{ 'button-active': collisionWarningEnabled }" @click="toggleMenu('collision')">
+          <i class="icon svg-collision"></i>
+        </button>
       </div>
       <div v-show="menu.cat" class="toolbarSwitches">
         <satellite-select />
@@ -242,6 +245,80 @@
           </div>
         </div>
       </div>
+
+      <!-- 碰撞预警独立面板 -->
+      <div v-show="menu.collision" class="toolbarSwitches collision-panel">
+        <div class="panel-header">
+          <i class="panel-icon svg-sat-collision"></i>
+          <span class="panel-title">{{ $t("collisionWarning") }}</span>
+          <span v-if="collisionWarningEnabled" class="status-badge active">{{ $t("enabled") }}</span>
+        </div>
+
+        <div class="settings-section">
+          <div class="section-header">
+            <i class="section-icon icon-settings"></i>
+            {{ $t("settings") }}
+          </div>
+          <div class="gs-toggle-row">
+            <span class="toggle-label">{{ $t("enableCollisionWarning") }}</span>
+            <label class="gs-switch">
+              <input v-model="collisionWarningEnabled" type="checkbox" />
+              <span class="gs-slider"></span>
+            </label>
+          </div>
+
+          <div v-if="collisionWarningEnabled" class="gs-distance-control">
+            <label class="distance-label">
+              <i class="control-icon icon-distance"></i>
+              {{ $t("collisionThreshold") }}
+            </label>
+            <div class="distance-slider-container">
+              <input
+                v-model.number="collisionWarningThreshold"
+                type="range"
+                min="10"
+                max="500"
+                step="10"
+                class="distance-slider"
+                @input="onCollisionSliderInput"
+                @change="onCollisionSliderChange"
+              />
+              <span class="distance-value">{{ collisionWarningThreshold }} km</span>
+            </div>
+          </div>
+        </div>
+
+        <div v-if="collisionWarningEnabled" class="settings-section">
+          <div class="section-header warning-header">
+            <i class="section-icon icon-warning"></i>
+            {{ $t("activeWarnings") }} ({{ collisionWarnings.length }})
+          </div>
+
+          <div v-if="collisionWarnings.length > 0" class="collision-warning-list">
+            <div class="tracking-hint">{{ $t("collisionTrackingHint") }}</div>
+            <div
+              v-for="(warning, index) in collisionWarnings"
+              :key="index"
+              class="warning-item"
+              @click="focusOnSatellite(warning.sat1)"
+            >
+              <div class="warning-sats">
+                <span class="sat-name">{{ warning.sat1 }}</span>
+                <span class="warning-arrow">↔</span>
+                <span class="sat-name">{{ warning.sat2 }}</span>
+              </div>
+              <div class="warning-distance" :class="{ danger: warning.distance < 50 }">
+                {{ warning.distance.toFixed(1) }} km
+              </div>
+            </div>
+          </div>
+          <div v-else class="no-warnings">
+            <i class="no-warning-icon">✓</i>
+            <span>{{ $t("noWarnings") }}</span>
+          </div>
+        </div>
+      </div>
+
       <div v-show="menu.map" class="toolbarSwitches map-panel">
         <div class="panel-header">
           <i class="panel-icon svg-globe"></i>
@@ -339,7 +416,7 @@
         <div class="settings-section">
           <div class="section-header">
             <i class="section-icon icon-performance"></i>
-            {{ $t("performanceSettings") || "性能设置" }}
+            {{ $t("performanceSettings") }}
           </div>
           <div class="option-list">
             <label class="option-item">
@@ -366,7 +443,7 @@
         <div class="settings-section">
           <div class="section-header">
             <i class="section-icon icon-visual"></i>
-            {{ $t("visualSettings") || "视觉效果" }}
+            {{ $t("visualSettings") }}
           </div>
           <div class="option-list">
             <label class="option-item">
@@ -399,7 +476,7 @@
         <div class="settings-section">
           <div class="section-header">
             <i class="section-icon icon-location"></i>
-            {{ $t("quickNavigate") || "快速导航" }}
+            {{ $t("quickNavigate") }}
           </div>
           <div class="action-grid">
             <button class="action-btn" @click="cc.jumpTo('Everest')">
@@ -463,13 +540,14 @@ export default {
         ios: false,
         dbg: false,
         custom: false,
+        collision: false,
       },
       showUI: true,
     };
   },
   computed: {
     ...mapWritableState(useCesiumStore, ["layers", "terrainProvider", "sceneMode", "cameraMode", "qualityPreset", "showFps", "background", "pickMode"]),
-    ...mapWritableState(useSatStore, ["enabledComponents", "groundStations", "overpassMode", "dataLinkEnabled", "dataLinkDistanceThreshold"]),
+    ...mapWritableState(useSatStore, ["enabledComponents", "groundStations", "overpassMode", "dataLinkEnabled", "dataLinkDistanceThreshold", "collisionWarningEnabled", "collisionWarningThreshold", "collisionWarnings"]),
     showOrbitLegend() {
       return this.enabledComponents.includes("Orbit");
     },
@@ -559,12 +637,31 @@ export default {
       if (this._isDraggingDistanceSlider) return;
       cc.sats.dataLinkDistanceThreshold = distance;
     },
+    collisionWarningEnabled(enabled) {
+      // Only sync to cc.sats if cc is ready
+      if (typeof cc !== "undefined" && cc.sats) {
+        cc.sats.collisionWarningEnabled = enabled;
+      }
+    },
+    collisionWarningThreshold(distance) {
+      // Skip update while dragging - will be applied on drag end
+      if (this._isDraggingCollisionSlider) return;
+      if (typeof cc !== "undefined" && cc.sats) {
+        cc.sats.collisionWarningThreshold = distance;
+      }
+    },
   },
   mounted() {
     if (this.$route.query.time) {
       cc.setTime(this.$route.query.time);
     }
     this.showUI = !DeviceDetect.inIframe();
+
+    // Sync collision warning state to cc.sats after initialization
+    if (typeof cc !== "undefined" && cc.sats) {
+      cc.sats.collisionWarningEnabled = this.collisionWarningEnabled;
+      cc.sats.collisionWarningThreshold = this.collisionWarningThreshold;
+    }
   },
   methods: {
     toggleMenu(name) {
@@ -602,6 +699,42 @@ export default {
       // Apply the threshold update after dragging ends
       this._isDraggingDistanceSlider = false;
       cc.sats.dataLinkDistanceThreshold = this.dataLinkDistanceThreshold;
+    },
+    onCollisionSliderInput() {
+      // Mark as dragging to prevent threshold updates during drag
+      this._isDraggingCollisionSlider = true;
+    },
+    onCollisionSliderChange() {
+      // Apply the threshold update after dragging ends
+      this._isDraggingCollisionSlider = false;
+      cc.sats.collisionWarningThreshold = this.collisionWarningThreshold;
+    },
+    focusOnSatellite(satName) {
+      if (typeof cc !== "undefined" && cc.sats) {
+        const sat = cc.sats.getSatellite(satName);
+        if (!sat) {
+          // Try finding by partial match
+          const allSats = cc.sats.satellites;
+          sat = allSats.find((s) => s.props.name.includes(satName) || satName.includes(s.props.name));
+        }
+        if (sat) {
+          // Ensure satellite components are enabled
+          if (!sat.created) {
+            sat.show(cc.sats.enabledComponents);
+          }
+          // Use Point component as the entity to fly to
+          const entity = sat.components?.Point;
+          if (entity) {
+            cc.viewer.flyTo(entity, {
+              duration: 1.0,
+            });
+          } else {
+            console.warn(`[Focus] No Point entity for satellite: ${satName}`);
+          }
+        } else {
+          console.warn(`[Focus] Satellite not found: ${satName}`);
+        }
+      }
     },
   },
 };
@@ -700,6 +833,35 @@ export default {
   border: 1px solid rgba(255, 255, 255, 0.1);
   overflow-y: auto;
   overflow-x: hidden;
+}
+
+/* 碰撞预警独立面板样式 */
+.collision-panel {
+  width: 300px;
+  max-height: calc(100vh - 120px);
+  padding: 12px;
+  background: linear-gradient(135deg, rgba(48, 51, 54, 0.95), rgba(35, 38, 41, 0.95));
+  border-radius: 12px;
+  border: 1px solid rgba(255, 255, 255, 0.1);
+  overflow-y: auto;
+  overflow-x: hidden;
+}
+
+.collision-panel .panel-icon {
+  width: 24px;
+  height: 24px;
+  filter: brightness(1.5) drop-shadow(0 0 6px rgba(239, 68, 68, 0.6));
+}
+
+.collision-panel .button-active {
+  background: rgba(239, 68, 68, 0.3);
+  box-shadow: 0 0 8px rgba(239, 68, 68, 0.5);
+}
+
+.collision-panel .warning-header {
+  color: #ef4444;
+  background: linear-gradient(135deg, rgba(239, 68, 68, 0.2), rgba(239, 68, 68, 0.1));
+  border-bottom: 1px solid rgba(239, 68, 68, 0.2);
 }
 
 .panel-header {
@@ -1913,5 +2075,113 @@ export default {
 .ground-station-panel::-webkit-scrollbar-thumb:active {
   background: rgba(79, 172, 254, 0.9);
   box-shadow: 0 0 8px rgba(79, 172, 254, 0.5);
+}
+
+/* ===================== 碰撞预警样式 ===================== */
+.collision-warning-list {
+  margin-top: 12px;
+  background: rgba(0, 0, 0, 0.3);
+  border-radius: 8px;
+  border: 1px solid rgba(239, 68, 68, 0.3);
+  overflow: hidden;
+}
+
+.tracking-hint {
+  padding: 6px 12px;
+  font-size: 10px;
+  color: rgba(255, 255, 255, 0.5);
+  text-align: center;
+  background: rgba(0, 0, 0, 0.2);
+  border-bottom: 1px solid rgba(255, 255, 255, 0.05);
+}
+
+.warning-header {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 10px 12px;
+  background: linear-gradient(135deg, rgba(239, 68, 68, 0.2), rgba(239, 68, 68, 0.1));
+  font-size: 12px;
+  font-weight: 600;
+  color: #ef4444;
+  border-bottom: 1px solid rgba(239, 68, 68, 0.2);
+}
+
+.warning-icon {
+  font-size: 14px;
+}
+
+.warning-item {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  padding: 10px 12px;
+  border-bottom: 1px solid rgba(255, 255, 255, 0.05);
+  cursor: pointer;
+  transition: all 0.2s ease;
+}
+
+.warning-item:last-child {
+  border-bottom: none;
+}
+
+.warning-item:hover {
+  background: rgba(239, 68, 68, 0.1);
+}
+
+.warning-sats {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  font-size: 11px;
+}
+
+.sat-name {
+  color: #c0c0c0;
+  font-weight: 500;
+}
+
+.warning-arrow {
+  color: #ef4444;
+  font-size: 12px;
+}
+
+.warning-distance {
+  font-size: 12px;
+  font-weight: 600;
+  color: #fbbf24;
+  padding: 2px 8px;
+  background: rgba(251, 191, 36, 0.15);
+  border-radius: 10px;
+}
+
+.warning-distance.danger {
+  color: #ef4444;
+  background: rgba(239, 68, 68, 0.2);
+  animation: dangerPulse 1s infinite;
+}
+
+@keyframes dangerPulse {
+  0%, 100% {
+    opacity: 1;
+  }
+  50% {
+    opacity: 0.7;
+  }
+}
+
+.no-warnings {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 8px;
+  padding: 16px;
+  color: #4caf50;
+  font-size: 12px;
+  font-weight: 500;
+}
+
+.no-warning-icon {
+  font-size: 16px;
 }
 </style>

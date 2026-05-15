@@ -1,6 +1,7 @@
 export default {
   // Toolbar tooltips
   satelliteSelection: "卫星选择",
+  settings: "设置",
   satelliteElements: "卫星元素",
   groundStation: "地面站",
   map: "地图",
@@ -48,6 +49,16 @@ export default {
   connectedStation: "已连接",
   enabled: "已启用",
 
+  // Collision Warning
+  collisionWarning: "碰撞预警",
+  collisionTrackingHint: "点击定位卫星",
+  enableCollisionWarning: "启用碰撞预警",
+  collisionThreshold: "预警距离",
+  activeWarnings: "当前预警",
+  noWarnings: "暂无预警",
+  collisionDetected: "检测到碰撞风险",
+  distance: "距离",
+
   // Layers
   layersTitle: "图层",
   terrainTitle: "地形",
@@ -64,6 +75,7 @@ export default {
 
   // Debug
   debugTitle: "调试",
+  quickNavigate: "快速导航",
   fps: "帧率",
   requestRender: "请求渲染",
   highQuality: "高质量",
@@ -112,6 +124,8 @@ export default {
 
   // Misc
   loading: "加载中...",
+  performanceSettings: "性能设置",
+  visualSettings: "视觉效果",
   error: "错误",
   close: "关闭",
   cancel: "取消",
