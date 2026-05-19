@@ -711,7 +711,7 @@ export default {
     },
     focusOnSatellite(satName) {
       if (typeof cc !== "undefined" && cc.sats) {
-        const sat = cc.sats.getSatellite(satName);
+        let sat = cc.sats.getSatellite(satName);
         if (!sat) {
           // Try finding by partial match
           const allSats = cc.sats.satellites;
